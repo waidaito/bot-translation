@@ -10,7 +10,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is on"
+    return "Bot is alive"
 
 def run_flask():
     app.run(host='0.0.0.0', port=8080)
@@ -27,9 +27,21 @@ bot = commands.Bot(command_prefix=".", intents=intents)
 
 user_target_lang = {}
 
+def bot_response(user_id, text):
+    target_lang = user_target_lang.get(user_id, "en")
+    try:
+        return GoogleTranslator(source='auto', target=target_lang).translate(text)
+    except:
+        return text
+
 class LanguageSelect(discord.ui.Select):
-    def __init__(self, foreign_text):
+    def __init__(self, foreign_text, user_id):
         self.foreign_text = foreign_text
+        self.user_id = user_id
+        
+        target_lang = user_target_lang.get(user_id, "en")
+        placeholder_text = GoogleTranslator(source='auto', target=target_lang).translate("Choose a language to translate...")
+        
         options = [
             discord.SelectOption(label="Tiếng Việt", value="vi"),
             discord.SelectOption(label="Tiếng Anh", value="en"),
@@ -37,26 +49,26 @@ class LanguageSelect(discord.ui.Select):
             discord.SelectOption(label="Tiếng Hàn", value="ko"),
             discord.SelectOption(label="Tiếng Trung", value="zh-cn")
         ]
-        super().__init__(placeholder="Chọn ngôn ngữ muốn dịch...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder=placeholder_text, min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer()
         try:
             target_lang = self.values[0]
             translated_text = GoogleTranslator(source='auto', target=target_lang).translate(self.foreign_text)
-            await interaction.followup.send(content=translated_text, ephemeral=True)
+            await interaction.followup.send(content=translated_text)
         except Exception as e:
-            await interaction.followup.send(content=f"erro: {e}", ephemeral=True)
+            msg = bot_response(self.user_id, f"erro: {e}")
+            await interaction.followup.send(content=msg)
 
 class LanguageView(discord.ui.View):
-    def __init__(self, foreign_text):
+    def __init__(self, foreign_text, user_id):
         super().__init__(timeout=60)
-        self.add_item(LanguageSelect(foreign_text))
+        self.add_item(LanguageSelect(foreign_text, user_id))
 
 @bot.event
 async def on_ready():
     try:
-        bot.tree.add_command(ctx_menu_translate)
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} command(s)")
     except Exception as e:
@@ -67,22 +79,30 @@ async def on_ready():
 @app_commands.describe(lang="Language code (eg: en, ja, ko)")
 @app_commands.dm_only()
 async def set_language(interaction: discord.Interaction, lang: str):
-    user_target_lang[interaction.user.id] = lang.lower()
-    await interaction.response.send_message(f"set target language to {lang.lower()}.", ephemeral=True)
+    user_id = interaction.user.id
+    user_target_lang[user_id] = lang.lower()
+    
+    success_msg = bot_response(user_id, f"set target language to {lang.lower()}.")
+    await interaction.response.send_message(success_msg)
 
-@app_commands.context_menu(name="dich")
-async def ctx_menu_translate(interaction: discord.Interaction, message: discord.Message):
+@bot.tree.command(name="dich", description="Dịch tin nhắn nhập vào")
+@app_commands.describe(message="Tin nhắn bro muốn dịch")
+async def server_translate(interaction: discord.Interaction, message: str):
+    user_id = interaction.user.id
+
     if interaction.guild is None:
-        await interaction.response.send_message("Lệnh này chỉ dùng ở Server thường.", ephemeral=True)
+        msg = bot_response(user_id, "This command can only be used in servers.")
+        await interaction.response.send_message(msg)
         return
 
-    foreign_text = message.content
-    if not foreign_text or not foreign_text.strip():
-        await interaction.response.send_message("erro: Tin nhắn trống", ephemeral=True)
+    if not message or not message.strip():
+        msg = bot_response(user_id, "erro: Empty message")
+        await interaction.response.send_message(msg)
         return
 
-    view = LanguageView(foreign_text)
-    await interaction.response.send_message("Chọn ngôn ngữ bro muốn dịch sang bên dưới:", view=view, ephemeral=True)
+    view = LanguageView(message, user_id)
+    title_msg = bot_response(user_id, f"Choose a language to translate this message:")
+    await interaction.response.send_message(f"{title_msg} *\"{message}\"*", view=view)
 
 @bot.event
 async def on_message(message):
